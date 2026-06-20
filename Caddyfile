@@ -1,0 +1,12 @@
+# Caddy reverse proxy with automatic HTTPS.
+# DOMAIN is supplied by docker-compose (defaults to localhost).
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Defence in depth: cap request bodies to match the app's upload limit.
+	request_body {
+		max_size 25MB
+	}
+
+	reverse_proxy app:8000
+}
