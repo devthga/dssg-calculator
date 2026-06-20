@@ -1,12 +1,11 @@
-# vino — MacDive DSSG calculator
+# MacDive DSSG calculator
 
 Takes an export from the [MacDive](https://www.mac-dive.com/) dive-logging app,
 calculates the **DAN Surface Supersaturation Gradient (DSSG)** for every dive,
 produces a statistical overview, and builds a small browsable HTML website for
 exploring the dives and their DSSG.
 
-Pure Python 3 standard library — **no third-party dependencies, fully offline**
-(charts are inline SVG generated in Python; the website needs no internet).
+This was prompted by the following research: https://journals.viamedica.pl/international_maritime_health/article/view/108038
 
 ## Quick start
 
