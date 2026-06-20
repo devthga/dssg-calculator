@@ -19,9 +19,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-# ZH-L16 nitrogen half-times (minutes) for the 16 compartments.
+# ZH-L16C nitrogen half-times (minutes) for the 16 compartments.
+# (The N2 half-times are identical across the ZH-L16 A/B/C variants; only the
+# a/b coefficients differ, and those are not needed for the DSSG gradient.)
 N2_HALFTIMES = (
-    5.0, 8.0, 12.5, 18.5, 27.0, 38.3, 54.3, 77.0,
+    4.0, 8.0, 12.5, 18.5, 27.0, 38.3, 54.3, 77.0,
     109.0, 146.0, 187.0, 239.0, 305.0, 390.0, 498.0, 635.0,
 )
 

@@ -48,15 +48,17 @@ def profile(max_depth, bottom_min, safety_stop=True, descent_rate=18.0,
     return pts
 
 
+# Realistic, NDL-respecting recreational profiles spanning a range of
+# decompression stress (depth m, bottom minutes, gas).
 DIVES = [
-    ("Blue Hole, Gozo", 38.0, 22, "nitrox32", 0.32),
-    ("SS Thistlegorm", 30.0, 35, "air", 0.21),
-    ("Manta Point", 18.0, 48, "air", 0.21),
-    ("Richelieu Rock", 26.0, 40, "nitrox28", 0.28),
-    ("Liberty Wreck", 28.0, 30, "air", 0.21),
-    ("Shark Reef", 24.0, 38, "nitrox32", 0.32),
-    ("Cathedral Cave", 42.0, 18, "nitrox28", 0.28),
-    ("House Reef", 14.0, 58, "air", 0.21),
+    ("Blue Hole, Gozo", 38.0, 16, "nitrox32", 0.32),
+    ("SS Thistlegorm", 30.0, 18, "air", 0.21),
+    ("Manta Point", 16.0, 45, "air", 0.21),
+    ("Richelieu Rock", 26.0, 24, "nitrox28", 0.28),
+    ("Liberty Wreck", 28.0, 20, "air", 0.21),
+    ("Shark Reef", 22.0, 30, "nitrox32", 0.32),
+    ("Cathedral Cave", 40.0, 13, "nitrox28", 0.28),
+    ("House Reef", 12.0, 55, "air", 0.21),
 ]
 
 

@@ -38,8 +38,10 @@ class TissueModelTests(unittest.TestCase):
         amb = STANDARD_SURFACE_PRESSURE + depth / 10.0
         pi = (amb - WATER_VAPOUR_PRESSURE) * FN2_AIR
         p0 = (STANDARD_SURFACE_PRESSURE - WATER_VAPOUR_PRESSURE) * FN2_AIR
-        # Compartment 1 (5 min half-time) check:
-        ht = 5.0
+        # Compartment 1 (ZH-L16C: 4.0 min half-time) check:
+        from dssg.buhlmann import N2_HALFTIMES
+        ht = N2_HALFTIMES[0]
+        self.assertEqual(ht, 4.0)
         k = math.log(2) / ht
         haldane = pi + (p0 - pi) * math.exp(-k * minutes)
         self.assertAlmostEqual(m.p_n2[0], haldane, places=6)
@@ -60,6 +62,48 @@ class TissueModelTests(unittest.TestCase):
         res = compute_dssg(_square_dive(30.0, 30))
         self.assertGreater(res.dssg_bar, 0.0)
         self.assertTrue(1 <= res.leading_compartment <= 16)
+
+    def test_dssg_in_paper_plausible_range(self):
+        # The DAN DSL 2024 study observed DSSG in roughly 0.25-1.40 bar/ata.
+        # A representative recreational profile should land inside that range.
+        for res in (compute_dssg(_square_dive(18.0, 40)),
+                    compute_dssg(_square_dive(12.0, 50))):
+            self.assertGreater(res.dssg_bar, 0.25)
+            self.assertLessEqual(res.dssg_bar, 1.40)
+
+
+class SurfacingCorrectionTests(unittest.TestCase):
+    def test_trailing_shallow_collapsed_to_surface(self):
+        from dssg.calculator import normalise_surfacing
+        from dssg.parser import Sample
+        samples = [Sample(0, 0.0), Sample(60, 20.0), Sample(120, 20.0),
+                   Sample(180, 0.4), Sample(200, 0.3), Sample(220, 0.2)]
+        out = normalise_surfacing(samples)
+        self.assertEqual(out[-1].depth_m, 0.0)
+        # the three trailing <=0.5 m samples collapse into one 0 m point
+        self.assertEqual(len(out), 4)
+
+    def test_profile_ending_at_half_meter_matches_zero(self):
+        # A computer that stops at 0.5 m should give ~the same DSSG as one
+        # that reaches 0 m, thanks to the surfacing correction.
+        a = _square_dive(30.0, 30, last_depth=0.0)
+        b = _square_dive(30.0, 30, last_depth=0.4)
+        self.assertAlmostEqual(compute_dssg(a).dssg_bar,
+                               compute_dssg(b).dssg_bar, places=2)
+
+
+class RiskTests(unittest.TestCase):
+    def test_band_thresholds(self):
+        from dssg.risk import classify
+        self.assertEqual(classify(0.5).label, "Very low")
+        self.assertEqual(classify(0.75).label, "Moderate")
+        self.assertEqual(classify(0.95).label, "High")
+        self.assertEqual(classify(1.2).label, "Very high")
+
+    def test_dcs_rate_monotonic(self):
+        from dssg.risk import classify
+        rates = [classify(x).dcs_rate_pct for x in (0.5, 0.65, 0.75, 0.85, 0.95, 1.1)]
+        self.assertEqual(rates, sorted(rates))
 
 
 class ParserTests(unittest.TestCase):
@@ -118,7 +162,7 @@ class HtmlTests(unittest.TestCase):
             self.assertIn("DSSG", doc)
 
 
-def _square_dive(max_depth, bottom_min, fo2=0.21):
+def _square_dive(max_depth, bottom_min, fo2=0.21, last_depth=0.0):
     """Build a simple square-profile dive in memory."""
     step = 20
     samples = [Sample(time_s=0, depth_m=0.0, mix_ref="m")]
@@ -132,10 +176,10 @@ def _square_dive(max_depth, bottom_min, fo2=0.21):
     while t < end:
         t += step
         samples.append(Sample(t, max_depth))
-    # ascent at 9 m/min to surface
-    while samples[-1].depth_m > 0:
+    # ascent at 9 m/min to (near) surface
+    while samples[-1].depth_m > last_depth:
         t += step
-        samples.append(Sample(t, max(0.0, samples[-1].depth_m - 9 * step / 60)))
+        samples.append(Sample(t, max(last_depth, samples[-1].depth_m - 9 * step / 60)))
     return Dive(
         number=1, dive_id="t", datetime=None, location="Test",
         samples=samples,

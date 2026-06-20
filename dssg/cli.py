@@ -68,15 +68,16 @@ def main(argv=None) -> int:
         write_report(args.output, dives, results, summaries, stats)
 
     # Console summary.
-    d = stats["dssg_msw"]
+    d = stats["dssg"]
     print(f"Analysed {stats['dive_count']} dive(s).")
-    print(f"  DSSG  mean {d.get('mean', 0):.2f} msw | "
-          f"median {d.get('median', 0):.2f} | "
-          f"min {d.get('min', 0):.2f} | max {d.get('max', 0):.2f}")
+    print(f"  DSSG (bar/ata)  mean {d.get('mean', 0):.3f} | "
+          f"median {d.get('median', 0):.3f} | "
+          f"min {d.get('min', 0):.3f} | max {d.get('max', 0):.3f}")
     most = stats.get("most_stressful_dive")
     if most:
         print(f"  Highest DSSG: dive #{most['number']} "
-              f"({most['dssg_msw']:.2f} msw, {most.get('location') or 'unknown site'})")
+              f"({most['dssg']:.3f} bar, {most['risk_band']} risk, "
+              f"{most.get('location') or 'unknown site'})")
     print(f"Report written to: {os.path.abspath(args.output)}")
     if not args.no_html:
         print(f"  Open: {os.path.join(os.path.abspath(args.output), 'index.html')}")
