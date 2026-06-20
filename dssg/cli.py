@@ -70,13 +70,13 @@ def main(argv=None) -> int:
     # Console summary.
     d = stats["dssg"]
     print(f"Analysed {stats['dive_count']} dive(s).")
-    print(f"  DSSG (bar/ata)  mean {d.get('mean', 0):.3f} | "
+    print(f"  DSSG (gradient factor)  mean {d.get('mean', 0):.3f} | "
           f"median {d.get('median', 0):.3f} | "
           f"min {d.get('min', 0):.3f} | max {d.get('max', 0):.3f}")
     most = stats.get("most_stressful_dive")
     if most:
         print(f"  Highest DSSG: dive #{most['number']} "
-              f"({most['dssg']:.3f} bar, {most['risk_band']} risk, "
+              f"(GF {most['dssg']:.3f}, {most['risk_band']} risk, "
               f"{most.get('location') or 'unknown site'})")
     print(f"Report written to: {os.path.abspath(args.output)}")
     if not args.no_html:

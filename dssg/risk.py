@@ -25,7 +25,8 @@ class RiskBand:
 
 
 # Ordered from highest threshold to lowest; the first band whose lower bound is
-# met applies. Lower bound is the DSSG value (bar/ata) at which the band starts.
+# met applies. Lower bound is the DSSG value (gradient factor) at which the
+# band starts.
 _BANDS: tuple[tuple[float, RiskBand], ...] = (
     (1.0, RiskBand("Very high", "#ef4444", 37.532)),
     (0.9, RiskBand("High", "#f87171", 3.344)),
@@ -35,7 +36,8 @@ _BANDS: tuple[tuple[float, RiskBand], ...] = (
     (0.0, RiskBand("Very low", "#34d399", 0.0)),
 )
 
-# The full Table 3 lookup, for display as a reference on the report.
+# The full Table 3 lookup (DSSG given as a gradient factor), for display as a
+# reference on the report.
 DAN_DSL_2024_TABLE = (
     ("≤ 0.5", 0.0),
     ("0.6", 0.012),
@@ -52,9 +54,9 @@ PAPER_MEDIAN_NON_DCS = 0.743
 PAPER_MEDIAN_DCS = 0.866
 
 
-def classify(dssg_bar: float) -> RiskBand:
-    """Return the empirical risk band for a DSSG value (in bar/ata)."""
+def classify(dssg: float) -> RiskBand:
+    """Return the empirical risk band for a DSSG (gradient factor) value."""
     for lower, band in _BANDS:
-        if dssg_bar >= lower:
+        if dssg >= lower:
             return band
     return _BANDS[-1][1]

@@ -23,15 +23,15 @@ class DiveSummary:
     max_depth_m: float
     duration_min: float
     min_temp_c: Optional[float]
-    dssg: float                 # bar/ata -- the paper's DSSG value
-    dssg_msw: float             # diver-friendly secondary unit
+    dssg: float                 # gradient factor (fraction of M-value)
+    raw_gradient_bar: float     # raw leading-compartment gradient (bar), reference
     leading_compartment: int    # DSSG_COMPRT
     risk_band: str              # empirical risk level (DAN DSL 2024)
     dcs_rate_pct: float         # observed DCS incidence for this DSSG band
 
 
 def summarise_dive(dive: Dive, result: DSSGResult) -> DiveSummary:
-    band = classify(result.dssg_bar)
+    band = classify(result.dssg)
     return DiveSummary(
         number=dive.number,
         dive_id=dive.dive_id,
@@ -40,8 +40,8 @@ def summarise_dive(dive: Dive, result: DSSGResult) -> DiveSummary:
         max_depth_m=round(dive.max_depth, 1),
         duration_min=round(dive.duration_s / 60.0, 1),
         min_temp_c=round(dive.min_temp_c, 1) if dive.min_temp_c is not None else None,
-        dssg=round(result.dssg_bar, 3),
-        dssg_msw=round(result.dssg_msw, 2),
+        dssg=round(result.dssg, 3),
+        raw_gradient_bar=round(result.raw_gradient_bar, 3),
         leading_compartment=result.leading_compartment,
         risk_band=band.label,
         dcs_rate_pct=band.dcs_rate_pct,
@@ -89,7 +89,7 @@ def build_statistics(summaries: list[DiveSummary]) -> dict:
 
     return {
         "dive_count": len(summaries),
-        "dssg": _describe(dssg),  # bar/ata
+        "dssg": _describe(dssg),  # gradient factor
         "max_depth_m": _describe(depths),
         "duration_min": _describe(durations),
         "dssg_histogram": _histogram(dssg),

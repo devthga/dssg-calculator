@@ -56,7 +56,7 @@ holds *above* the surrounding pressure at the moment of surfacing. In the DAN
 DSL Database 2024 study (127,957 dives) it was the **single strongest
 independent predictor of decompression sickness**.
 
-The implementation follows the paper's methodology:
+The implementation follows the methodology of the two DAN papers:
 
 1. A **Bühlmann ZH‑L16C** model is initialised assuming the diver was saturated
    breathing air at the surface before the dive.
@@ -67,23 +67,32 @@ The implementation follows the paper's methodology:
 3. The model is integrated segment‑by‑segment through the profile using the
    **Schreiner equation**, with the breathing gas in effect at each waypoint
    (air, nitrox, or trimix — nitrogen *and* helium across all 16 compartments).
-4. At surfacing, each compartment's gradient is
-   `tissue inert‑gas tension − surface pressure`.
-5. The dive's **DSSG** is the gradient of the **leading compartment** — the one
-   with the *highest critical ratio* at surfacing (also reported as
-   `DSSG_COMPRT`, the compartment number). Because ambient pressure is identical
-   for every compartment at the surface, the highest‑ratio compartment is also
-   the highest‑gradient one.
+4. At surfacing, each compartment's supersaturation is expressed as a
+   **gradient factor (GF)** — the inert‑gas overpressure as a *fraction of the
+   M‑value* (Baker, 1998):
 
-The DSSG is reported in **bar/ata** (the paper's unit; mean **0.71 ± 0.14**,
-range **0.25–1.40**), with msw shown as a secondary diver‑friendly figure.
+   ```
+   M(P_amb) = a + P_amb / b          (ZH‑L16C a/b coefficients)
+   GF       = (P_tissue − P_amb) / (M(P_amb) − P_amb)
+   ```
+
+5. The dive's **DSSG** is the GF of the **leading compartment** — the one with
+   the *highest gradient factor / critical ratio* at surfacing (also reported as
+   `DSSG_COMPRT`, the compartment number). Because the M‑value differs per
+   compartment, this is **not** generally the highest‑*tension* compartment.
+
+The DSSG is therefore a **dimensionless gradient factor**, where **GF = 1.0
+means surfacing exactly at the ZH‑L16C M‑value limit**. In the DAN DSL 2024
+study the mean was **0.71 ± 0.14** (range **0.25–1.40**); this tool reproduces
+that scale (the bundled demo averages ≈ 0.69). The raw gradient in bar is also
+reported as a secondary figure.
 
 ### Empirical DCS risk (DAN DSL 2024, Table 3)
 
 The report colour‑codes each dive and shows the observed DCS incidence for its
 DSSG band:
 
-| DSSG (bar/ata) | Risk band | Observed DCS rate |
+| DSSG (GF) | Risk band | Observed DCS rate |
 |---|---|---|
 | ≤ 0.5 | Very low | ~0% |
 | 0.6 | Low | 0.012% |
@@ -92,13 +101,15 @@ DSSG band:
 | 0.9 | High | 3.344% |
 | ≥ 1.0 | Very high | 37.532% |
 
-> Only the compartment half‑times are needed to integrate gas tensions, so the
-> result is independent of the ZH‑L16 a/b sub‑variant (those coefficients only
-> affect ceiling / M‑value calculations, which the DSSG does not use).
-
-**Source:** Marroni A. et al., *Identification of DCS risk factors in
-recreational diving: multifactorial model based on the DAN DSL Database 2024*,
-International Maritime Health, 2026.
+**Sources:**
+- Marroni A. et al., *Identification of DCS risk factors in recreational
+  diving: multifactorial model based on the DAN DSL Database 2024*,
+  International Maritime Health, 2026.
+- Cialoni D., Pieri M., Balestra C., Marroni A., *Dive Risk Factors, Gas Bubble
+  Formation, and Decompression Illness in Recreational SCUBA Diving: Analysis
+  of DAN Europe DSL Data Base*, Frontiers in Psychology, 2017; 8: 1587
+  ([doi:10.3389/fpsyg.2017.01587](https://doi.org/10.3389/fpsyg.2017.01587)) —
+  the paper defining the gradient‑factor calculation referenced above.
 
 **This is an educational/analysis tool, not a dive planner or a medical
 device. Do not use it to plan dives or make decompression decisions.**

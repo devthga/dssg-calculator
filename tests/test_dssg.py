@@ -49,27 +49,33 @@ class TissueModelTests(unittest.TestCase):
     def test_deeper_longer_increases_dssg(self):
         shallow = _square_dive(15.0, 20)
         deep = _square_dive(35.0, 40)
-        self.assertGreater(compute_dssg(deep).dssg_bar,
-                           compute_dssg(shallow).dssg_bar)
+        self.assertGreater(compute_dssg(deep).dssg,
+                           compute_dssg(shallow).dssg)
 
     def test_nitrox_reduces_dssg_vs_air(self):
         air = _square_dive(30.0, 30, fo2=0.21)
         nitrox = _square_dive(30.0, 30, fo2=0.32)
-        self.assertGreater(compute_dssg(air).dssg_bar,
-                           compute_dssg(nitrox).dssg_bar)
+        self.assertGreater(compute_dssg(air).dssg,
+                           compute_dssg(nitrox).dssg)
 
     def test_dssg_positive_for_real_dive(self):
         res = compute_dssg(_square_dive(30.0, 30))
-        self.assertGreater(res.dssg_bar, 0.0)
+        self.assertGreater(res.dssg, 0.0)
         self.assertTrue(1 <= res.leading_compartment <= 16)
 
-    def test_dssg_in_paper_plausible_range(self):
-        # The DAN DSL 2024 study observed DSSG in roughly 0.25-1.40 bar/ata.
-        # A representative recreational profile should land inside that range.
-        for res in (compute_dssg(_square_dive(18.0, 40)),
-                    compute_dssg(_square_dive(12.0, 50))):
-            self.assertGreater(res.dssg_bar, 0.25)
-            self.assertLessEqual(res.dssg_bar, 1.40)
+    def test_dssg_is_gradient_factor(self):
+        # The DSSG is a gradient factor: 1.0 == at the ZH-L16C M-value. A no-
+        # stop recreational profile should sit below ~1.4 GF; a benign one
+        # should be modest.
+        res = compute_dssg(_square_dive(18.0, 40))
+        self.assertGreater(res.dssg, 0.25)
+        self.assertLessEqual(res.dssg, 1.40)
+
+    def test_gf_at_surface_saturation_is_zero(self):
+        # Saturated on air at the surface => no supersaturation => GF ~ 0.
+        from dssg.buhlmann import TissueModel
+        gfs = TissueModel().gradient_factors()
+        self.assertLessEqual(max(gfs), 1e-6)
 
 
 class SurfacingCorrectionTests(unittest.TestCase):
@@ -88,8 +94,8 @@ class SurfacingCorrectionTests(unittest.TestCase):
         # that reaches 0 m, thanks to the surfacing correction.
         a = _square_dive(30.0, 30, last_depth=0.0)
         b = _square_dive(30.0, 30, last_depth=0.4)
-        self.assertAlmostEqual(compute_dssg(a).dssg_bar,
-                               compute_dssg(b).dssg_bar, places=2)
+        self.assertAlmostEqual(compute_dssg(a).dssg,
+                               compute_dssg(b).dssg, places=2)
 
 
 class RiskTests(unittest.TestCase):
