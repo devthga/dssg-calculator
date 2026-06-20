@@ -1,22 +1,32 @@
-"""Parser for MacDive UDDF (Universal Dive Data Format) exports.
+"""Parsers for dive-log exports (UDDF and Subsurface native XML).
 
-MacDive's *Export > UDDF* produces an XML document containing, among other
-things, the full depth/time sample profile for every dive plus the gas mixes
-used.  That profile is exactly what the DSSG calculation needs.
+The DSSG calculation needs the full depth/time sample profile and the breathing
+gas for every dive.  Several apps can export that:
 
-The parser is deliberately tolerant: UDDF documents in the wild vary in their
-namespace, element ordering and which optional fields are present.  Missing
-data falls back to sensible defaults (air, sea-level atmospheric pressure).
+* **MacDive**, and many others, via **UDDF** (Universal Dive Data Format).
+* **Subsurface** via its native XML (``<divelog>``) or via UDDF.
+
+Other tools (Shearwater, Suunto DM, DivingLog, Garmin Dive, etc.) that can
+export UDDF are handled by the UDDF parser.  Files without a per-sample profile
+(most summary-only CSV exports) cannot be analysed and are rejected.
+
+XML is parsed with DTD/entity declarations disabled, which prevents
+"billion laughs" entity-expansion denial-of-service from untrusted uploads.
 """
 
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+import xml.parsers.expat as expat
 from dataclasses import dataclass, field
 from datetime import datetime
+from math import isfinite
 from typing import Optional
 
 from .buhlmann import FN2_AIR, STANDARD_SURFACE_PRESSURE
+
+# Hard cap on input size (bytes) to bound memory/CPU on untrusted uploads.
+MAX_INPUT_BYTES = 25 * 1024 * 1024
 
 
 @dataclass
@@ -78,8 +88,8 @@ class Dive:
 
 
 def _localname(tag: str) -> str:
-    """Return an element's tag without its XML namespace."""
-    return tag.rsplit("}", 1)[-1]
+    """Return an element's tag without its XML namespace or prefix."""
+    return tag.rsplit("}", 1)[-1].rsplit(":", 1)[-1]
 
 
 def _strip_namespaces(root: ET.Element) -> ET.Element:
@@ -87,6 +97,36 @@ def _strip_namespaces(root: ET.Element) -> ET.Element:
         el.tag = _localname(el.tag)
         el.attrib = {_localname(k): v for k, v in el.attrib.items()}
     return root
+
+
+def safe_xml_root(path: str) -> ET.Element:
+    """Parse an XML file into a namespace-stripped element tree, safely.
+
+    DTD/DOCTYPE declarations are rejected, which blocks internal entity
+    expansion ("billion laughs") attacks. External entities are not resolved
+    by the underlying expat parser, so XXE is not possible either.
+    """
+    with open(path, "rb") as fh:
+        data = fh.read(MAX_INPUT_BYTES + 1)
+    if len(data) > MAX_INPUT_BYTES:
+        raise ValueError(
+            f"input file exceeds the {MAX_INPUT_BYTES // (1024 * 1024)} MB limit")
+
+    parser = expat.ParserCreate()
+
+    def _forbid_dtd(*_args):
+        raise ValueError("XML DTD/DOCTYPE declarations are not allowed")
+
+    parser.StartDoctypeDeclHandler = _forbid_dtd
+    builder = ET.TreeBuilder()
+    parser.StartElementHandler = lambda tag, attrs: builder.start(tag, attrs)
+    parser.EndElementHandler = lambda tag: builder.end(tag)
+    parser.CharacterDataHandler = builder.data
+    try:
+        parser.Parse(data, True)
+    except expat.ExpatError as exc:
+        raise ValueError(f"invalid XML: {exc}") from exc
+    return _strip_namespaces(builder.close())
 
 
 def _find_text(el: ET.Element, tag: str) -> Optional[str]:
@@ -100,9 +140,11 @@ def _to_float(value: Optional[str]) -> Optional[float]:
     if value is None:
         return None
     try:
-        return float(value)
+        result = float(value)
     except ValueError:
         return None
+    # Reject inf/nan so crafted profiles cannot poison the tissue model.
+    return result if isfinite(result) else None
 
 
 def _parse_datetime(text: Optional[str]) -> Optional[datetime]:
@@ -196,9 +238,10 @@ def _dive_location(dive_el: ET.Element, sites: dict[str, str]) -> Optional[str]:
 
 def parse_uddf(path: str) -> list[Dive]:
     """Parse a UDDF file into a list of :class:`Dive` objects."""
-    tree = ET.parse(path)
-    root = _strip_namespaces(tree.getroot())
+    return _parse_uddf_root(safe_xml_root(path))
 
+
+def _parse_uddf_root(root: ET.Element) -> list[Dive]:
     global_mixes = _parse_gas_definitions(root)
     sites = _parse_dive_sites(root)
 
@@ -230,3 +273,169 @@ def parse_uddf(path: str) -> list[Dive]:
         )
 
     return dives
+
+
+# --------------------------------------------------------------------------- #
+# Subsurface native XML (<divelog>)
+# --------------------------------------------------------------------------- #
+
+def _ss_value(text: Optional[str]) -> Optional[float]:
+    """Parse a Subsurface "value unit" string, e.g. '18.3 m' -> 18.3."""
+    if not text:
+        return None
+    return _to_float(text.strip().split()[0])
+
+
+def _ss_duration(text: Optional[str]) -> Optional[float]:
+    """Parse a Subsurface time, e.g. '4:20 min' or '1:02:03' -> seconds."""
+    if not text:
+        return None
+    token = text.strip().split()[0]
+    seconds = 0.0
+    for part in token.split(":"):
+        value = _to_float(part)
+        if value is None:
+            return None
+        seconds = seconds * 60.0 + value
+    return seconds
+
+
+def _ss_percent(text: Optional[str]) -> Optional[float]:
+    if not text:
+        return None
+    return _to_float(text.replace("%", "").strip())
+
+
+def _ss_gasmixes(dive_el: ET.Element) -> dict[str, GasMix]:
+    mixes: dict[str, GasMix] = {}
+    for idx, cyl in enumerate(dive_el.findall("cylinder")):
+        o2 = _ss_percent(cyl.attrib.get("o2"))
+        he = _ss_percent(cyl.attrib.get("he")) or 0.0
+        fo2 = (o2 / 100.0) if o2 is not None else 0.21
+        fhe = he / 100.0
+        name = "Air" if abs(fo2 - 0.21) < 1e-6 and fhe == 0 else (
+            f"EAN{round(fo2 * 100)}" if fhe == 0 else
+            f"Tx{round(fo2 * 100)}/{round(fhe * 100)}")
+        mixes[f"cyl{idx}"] = GasMix(mix_id=f"cyl{idx}", name=name, fo2=fo2, fhe=fhe)
+    if not mixes:
+        mixes["cyl0"] = AIR
+    return mixes
+
+
+def _ss_samples(dc_el: ET.Element) -> list[Sample]:
+    # Gas-switch events: (time_s, cylinder index).
+    switches: list[tuple[float, int]] = []
+    for ev in dc_el.findall("event"):
+        if ev.attrib.get("name") == "gaschange":
+            t = _ss_duration(ev.attrib.get("time")) or 0.0
+            try:
+                cyl = int(ev.attrib.get("cylinder", "0"))
+            except ValueError:
+                cyl = 0
+            switches.append((t, cyl))
+    switches.sort()
+
+    def active_cylinder(t: float) -> int:
+        cyl = 0
+        for sw_t, sw_cyl in switches:
+            if sw_t <= t:
+                cyl = sw_cyl
+            else:
+                break
+        return cyl
+
+    samples: list[Sample] = []
+    for s in dc_el.findall("sample"):
+        t = _ss_duration(s.attrib.get("time"))
+        depth = _ss_value(s.attrib.get("depth"))
+        if t is None or depth is None:
+            continue
+        temp_c = _ss_value(s.attrib.get("temp"))
+        temp_k = temp_c + 273.15 if temp_c is not None else None
+        samples.append(Sample(time_s=t, depth_m=depth,
+                              mix_ref=f"cyl{active_cylinder(t)}",
+                              temperature_k=temp_k))
+    samples.sort(key=lambda x: x.time_s)
+    return samples
+
+
+def parse_subsurface(path: str) -> list[Dive]:
+    """Parse a Subsurface native XML (.ssrf/.xml) export."""
+    return _parse_subsurface_root(safe_xml_root(path))
+
+
+def _parse_subsurface_root(root: ET.Element) -> list[Dive]:
+    # Dive-site uuid -> name (Subsurface >= 4.7 keeps sites separately).
+    sites: dict[str, str] = {}
+    for site in root.iter("site"):
+        uuid = site.attrib.get("uuid")
+        name = site.attrib.get("name")
+        if uuid and name:
+            sites[uuid] = name
+
+    dives: list[Dive] = []
+    number = 0
+    for dive_el in root.iter("dive"):
+        dc = dive_el.find("divecomputer")
+        samples = _ss_samples(dc) if dc is not None else []
+        if not samples:
+            continue
+        number += 1
+
+        date = dive_el.attrib.get("date", "")
+        time = dive_el.attrib.get("time", "")
+        dt = _parse_datetime(f"{date}T{time}" if date and time else date or None)
+
+        location = None
+        site_ref = dive_el.attrib.get("divesiteid")
+        if site_ref and site_ref in sites:
+            location = sites[site_ref]
+        elif _find_text(dive_el, "location"):
+            location = _find_text(dive_el, "location")
+
+        dives.append(
+            Dive(
+                number=number,
+                dive_id=dive_el.attrib.get("number") or f"dive-{number}",
+                datetime=dt,
+                location=location,
+                samples=samples,
+                surface_pressure=STANDARD_SURFACE_PRESSURE,
+                gas_mixes=_ss_gasmixes(dive_el),
+            )
+        )
+    return dives
+
+
+# --------------------------------------------------------------------------- #
+# Format detection / dispatch
+# --------------------------------------------------------------------------- #
+
+SUPPORTED_FORMATS = (
+    "UDDF (MacDive, Subsurface, Shearwater, Suunto DM, DivingLog, Garmin, …)",
+    "Subsurface native XML (.ssrf / .xml)",
+)
+
+
+def parse_dive_log(path: str) -> tuple[str, list[Dive]]:
+    """Detect the export format and parse it.
+
+    Returns ``(format_name, dives)``. Raises ``ValueError`` if the format is
+    unsupported or contains no analysable dive profiles.
+    """
+    root = safe_xml_root(path)
+    tag = root.tag.lower()
+
+    if tag == "uddf":
+        return "UDDF", _parse_uddf_root(root)
+    if tag == "divelog":
+        return "Subsurface", _parse_subsurface_root(root)
+
+    # Unknown root: try UDDF heuristically (some exporters omit/rename it).
+    if root.find(".//waypoint") is not None:
+        return "UDDF", _parse_uddf_root(root)
+    if root.find(".//sample") is not None:
+        return "Subsurface", _parse_subsurface_root(root)
+
+    raise ValueError(
+        "unrecognised dive-log format. Supported: " + "; ".join(SUPPORTED_FORMATS))

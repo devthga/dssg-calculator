@@ -1,0 +1,5 @@
+# The DSSG calculator core and CLI use only the Python standard library.
+# These dependencies are required for the web application (dssg/web.py, serve.py).
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9

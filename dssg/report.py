@@ -7,6 +7,8 @@ inline SVG generated in Python so the report works completely offline.
 
 from __future__ import annotations
 
+import csv
+import dataclasses
 import html
 import json
 import os
@@ -439,6 +441,29 @@ def _fmt(value) -> str:
 # Orchestration
 # --------------------------------------------------------------------------- #
 
+def _csv_safe(value):
+    """Neutralise spreadsheet formula injection in CSV cells."""
+    if isinstance(value, str) and value and value[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
+
+
+def write_data(output_dir: str, summaries, stats) -> None:
+    """Write the machine-readable outputs (dives.csv + statistics.json)."""
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "statistics.json"), "w", encoding="utf-8") as fh:
+        json.dump(stats, fh, indent=2)
+    if summaries:
+        fields = [f.name for f in dataclasses.fields(summaries[0])]
+        with open(os.path.join(output_dir, "dives.csv"), "w",
+                  encoding="utf-8", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fields)
+            writer.writeheader()
+            for s in summaries:
+                writer.writerow({k: _csv_safe(v)
+                                 for k, v in dataclasses.asdict(s).items()})
+
+
 def write_report(output_dir: str, dives, results, summaries, stats) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
@@ -451,5 +476,4 @@ def write_report(output_dir: str, dives, results, summaries, stats) -> None:
                   "w", encoding="utf-8") as fh:
             fh.write(page)
 
-    with open(os.path.join(output_dir, "statistics.json"), "w", encoding="utf-8") as fh:
-        json.dump(stats, fh, indent=2)
+    write_data(output_dir, summaries, stats)

@@ -1,29 +1,15 @@
-"""Command-line interface for the MacDive DSSG calculator."""
+"""Command-line interface for the dive-log DSSG calculator."""
 
 from __future__ import annotations
 
 import argparse
-import csv
-import dataclasses
-import json
 import os
 import sys
 
 from .calculator import compute_dssg
-from .parser import parse_uddf
-from .report import write_report
+from .parser import parse_dive_log
+from .report import write_data, write_report
 from .statistics_report import build_statistics, summarise_dive
-
-
-def _write_csv(path: str, summaries) -> None:
-    if not summaries:
-        return
-    fields = [f.name for f in dataclasses.fields(summaries[0])]
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fields)
-        writer.writeheader()
-        for s in summaries:
-            writer.writerow(dataclasses.asdict(s))
 
 
 def main(argv=None) -> int:
@@ -45,26 +31,24 @@ def main(argv=None) -> int:
         return 1
 
     try:
-        dives = parse_uddf(args.input)
+        fmt, dives = parse_dive_log(args.input)
     except Exception as exc:  # noqa: BLE001 - surface a friendly message
-        print(f"error: could not parse UDDF file: {exc}", file=sys.stderr)
+        print(f"error: could not parse dive log: {exc}", file=sys.stderr)
         return 1
 
     if not dives:
         print("error: no dives with profile samples found in the export.",
               file=sys.stderr)
         return 1
+    print(f"Detected format: {fmt}")
 
     results = [compute_dssg(d) for d in dives]
     summaries = [summarise_dive(d, r) for d, r in zip(dives, results)]
     stats = build_statistics(summaries)
 
-    os.makedirs(args.output, exist_ok=True)
-    _write_csv(os.path.join(args.output, "dives.csv"), summaries)
-    with open(os.path.join(args.output, "statistics.json"), "w", encoding="utf-8") as fh:
-        json.dump(stats, fh, indent=2)
-
-    if not args.no_html:
+    if args.no_html:
+        write_data(args.output, summaries, stats)
+    else:
         write_report(args.output, dives, results, summaries, stats)
 
     # Console summary.

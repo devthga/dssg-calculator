@@ -1,30 +1,70 @@
-# vino — MacDive DSSG calculator
+# vino — dive-log DSSG analyzer
 
-Takes an export from the [MacDive](https://www.mac-dive.com/) dive-logging app,
-calculates the **DAN Surface Supersaturation Gradient (DSSG)** for every dive,
-produces a statistical overview, and builds a small browsable HTML website for
-exploring the dives and their DSSG.
+Takes a dive-log export, calculates the **DAN Surface Supersaturation Gradient
+(DSSG)** for every dive, produces a statistical overview, and builds a
+browsable HTML report. Use it as a **command-line tool** or as a **FastAPI web
+application** where you upload a file and the analysis runs on the server.
 
-Pure Python 3 standard library — **no third-party dependencies, fully offline**
-(charts are inline SVG generated in Python; the website needs no internet).
+Supports exports from **any app that includes a per-dive depth/time profile and
+gas mix** — see [Supported formats](#supported-formats) (MacDive, Subsurface,
+and other UDDF exporters).
 
-## Quick start
+> Licensed for **non-commercial use only** — AGPL-3.0 + Commons Clause. See
+> [License](#license).
+
+The DSSG calculator core and CLI use **only the Python standard library**. The
+web application additionally needs FastAPI (see `requirements.txt`).
+
+## Quick start (CLI)
 
 ```bash
-# 1. Export your dives from MacDive:  File ▸ Export ▸ UDDF   (.uddf / .xml)
-# 2. Run the calculator:
-python3 dssg_calculator.py path/to/your_macdive_export.uddf -o report
-
-# 3. Open the website:
+# Export your dives (e.g. MacDive: File ▸ Export ▸ UDDF), then:
+python3 dssg_calculator.py path/to/your_export.uddf -o report
 open report/index.html        # macOS   (xdg-open on Linux)
 ```
 
-Don't have an export handy? Generate a realistic sample and try it:
+Don't have an export handy? Generate realistic samples and try it:
 
 ```bash
-python3 sample/make_sample.py
+python3 sample/make_sample.py                 # MacDive-style UDDF
+python3 sample/make_subsurface_sample.py      # Subsurface .ssrf
 python3 dssg_calculator.py sample/macdive_sample.uddf -o report
 ```
+
+## Web application (FastAPI)
+
+Upload a dive log in the browser; the file is **stored permanently on the
+server** and analysed **server-side**, then you can browse the report.
+
+```bash
+pip install -r requirements.txt
+python3 serve.py                       # http://127.0.0.1:8000
+# or:  uvicorn dssg.web:app --reload
+```
+
+- **Upload** a UDDF or Subsurface export on the landing page.
+- The raw file is kept under `data/uploads/<id>/` and the generated report under
+  `data/reports/<id>/` (configurable with `--data` / `DSSG_DATA_DIR`).
+- Past analyses are listed on the landing page and via a JSON API:
+  `GET /api/analyses` and `GET /api/analyses/{id}`.
+
+**Hardening for untrusted uploads:** XML is parsed with DTD/entity declarations
+disabled (blocks "billion-laughs" and XXE), uploads are size-capped, generated
+CSV is protected against spreadsheet formula injection, and report/download
+paths are validated against directory traversal.
+
+## Supported formats
+
+Any app that can export a per-dive **depth/time profile** plus the **breathing
+gas** can be analysed. The format is auto-detected:
+
+| Format | Apps |
+|--------|------|
+| **UDDF** (`.uddf` / `.xml`) | MacDive, Subsurface, Shearwater, Suunto DM, DivingLog, Garmin Dive, and other UDDF exporters |
+| **Subsurface** native XML (`.ssrf` / `.xml`) | Subsurface |
+
+Summary-only exports (most plain CSVs, without per-sample depth/time) cannot be
+analysed and are rejected with a clear message.
 
 ## What you get
 
@@ -33,8 +73,8 @@ In the output directory (`report/` by default):
 | File | Contents |
 |------|----------|
 | `index.html` | Overview website: summary cards, DSSG histogram, correlations, and a sortable table of all dives (click a dive to drill in). |
-| `dive_<n>.html` | Per-dive page: depth profile, per-compartment surface-gradient chart, gas mixes and dive details. |
-| `dives.csv` | One row per dive (date, depth, duration, DSSG in bar & msw, leading compartment). |
+| `dive_<n>.html` | Per-dive page: depth profile, per-compartment gradient-factor chart, gas mixes and dive details. |
+| `dives.csv` | One row per dive (date, depth, duration, DSSG, leading compartment, risk band, DCS rate). |
 | `statistics.json` | Machine-readable statistical overview. |
 
 ### CLI options
@@ -114,28 +154,32 @@ DSSG band:
 **This is an educational/analysis tool, not a dive planner or a medical
 device. Do not use it to plan dives or make decompression decisions.**
 
-## Input format
+## Input requirements
 
-MacDive's **UDDF** export is used because it contains the full depth/time
-sample profile and gas mixes that the calculation needs. The parser is
-namespace‑tolerant and falls back to sensible defaults (air, sea‑level
-atmospheric pressure) when optional fields are absent. Dives without profile
-samples are skipped (the DSSG cannot be computed without a profile).
+A dive is analysable only if its export contains the full **depth/time sample
+profile** plus the **breathing gas**. The XML parsers are namespace‑tolerant
+and fall back to sensible defaults (air, sea‑level atmospheric pressure) when
+optional fields are absent. Dives without profile samples are skipped (the DSSG
+cannot be computed without a profile).
 
 ## Project layout
 
 ```
 dssg/
   buhlmann.py          ZH-L16C tissue model (Schreiner integration)
-  parser.py            MacDive UDDF parser
+  parser.py            UDDF + Subsurface parsers, format detection, safe XML
   calculator.py        DSSG computation + surfacing correction
   risk.py              DAN DSL 2024 empirical risk bands / DCS rates
   statistics_report.py per-dive summaries + aggregate statistics
-  report.py            self-contained HTML + inline-SVG report
+  report.py            self-contained HTML + inline-SVG report, CSV/JSON output
+  store.py             permanent upload storage + analysis (framework-agnostic)
+  web.py               FastAPI web application
   cli.py               command-line interface
-dssg_calculator.py     convenience launcher
-sample/make_sample.py  generates a demo UDDF export
-tests/test_dssg.py     unit tests (stdlib unittest)
+dssg_calculator.py     CLI launcher
+serve.py               web app launcher (uvicorn)
+requirements.txt       web-app dependencies (FastAPI/uvicorn)
+sample/                demo export generators (UDDF + Subsurface)
+tests/                 unit + web tests (stdlib unittest + FastAPI TestClient)
 ```
 
 ## Tests
@@ -143,3 +187,13 @@ tests/test_dssg.py     unit tests (stdlib unittest)
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+## License
+
+This project is licensed under the **GNU AGPL-3.0 with the Commons Clause**
+(see [`LICENSE`](LICENSE)). In short: you may use, modify, study and share it —
+including running it as a network service — provided you make complete
+corresponding source available to your users (AGPL). The **Commons Clause
+prohibits selling** the software or a service whose value derives substantially
+from it. For commercial/selling rights, contact the copyright holder. This is a
+source‑available, **non‑commercial** license and is not OSI "open source".
