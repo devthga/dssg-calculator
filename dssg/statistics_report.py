@@ -7,9 +7,9 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from typing import Optional
 
-from .buhlmann import MSW_PER_BAR
 from .calculator import DSSGResult
 from .parser import Dive
+from .risk import classify
 
 
 @dataclass
@@ -23,12 +23,15 @@ class DiveSummary:
     max_depth_m: float
     duration_min: float
     min_temp_c: Optional[float]
-    dssg_bar: float
-    dssg_msw: float
-    leading_compartment: int
+    dssg: float                 # gradient factor (fraction of M-value)
+    raw_gradient_bar: float     # raw leading-compartment gradient (bar), reference
+    leading_compartment: int    # DSSG_COMPRT
+    risk_band: str              # empirical risk level (DAN DSL 2024)
+    dcs_rate_pct: float         # observed DCS incidence for this DSSG band
 
 
 def summarise_dive(dive: Dive, result: DSSGResult) -> DiveSummary:
+    band = classify(result.dssg)
     return DiveSummary(
         number=dive.number,
         dive_id=dive.dive_id,
@@ -37,9 +40,11 @@ def summarise_dive(dive: Dive, result: DSSGResult) -> DiveSummary:
         max_depth_m=round(dive.max_depth, 1),
         duration_min=round(dive.duration_s / 60.0, 1),
         min_temp_c=round(dive.min_temp_c, 1) if dive.min_temp_c is not None else None,
-        dssg_bar=round(result.dssg_bar, 4),
-        dssg_msw=round(result.dssg_msw, 2),
+        dssg=round(result.dssg, 3),
+        raw_gradient_bar=round(result.raw_gradient_bar, 3),
         leading_compartment=result.leading_compartment,
+        risk_band=band.label,
+        dcs_rate_pct=band.dcs_rate_pct,
     )
 
 
@@ -73,27 +78,31 @@ def _histogram(values: list[float], bins: int = 10) -> dict:
 
 def build_statistics(summaries: list[DiveSummary]) -> dict:
     """Build a JSON-serialisable statistics overview."""
-    dssg_msw = [s.dssg_msw for s in summaries]
+    dssg = [s.dssg for s in summaries]
     depths = [s.max_depth_m for s in summaries]
     durations = [s.duration_min for s in summaries]
     leading = Counter(s.leading_compartment for s in summaries)
+    bands = Counter(s.risk_band for s in summaries)
 
-    most_stressful = max(summaries, key=lambda s: s.dssg_msw) if summaries else None
-    least_stressful = min(summaries, key=lambda s: s.dssg_msw) if summaries else None
+    most_stressful = max(summaries, key=lambda s: s.dssg) if summaries else None
+    least_stressful = min(summaries, key=lambda s: s.dssg) if summaries else None
 
     return {
         "dive_count": len(summaries),
-        "dssg_msw": _describe(dssg_msw),
+        "dssg": _describe(dssg),  # gradient factor
         "max_depth_m": _describe(depths),
         "duration_min": _describe(durations),
-        "dssg_histogram": _histogram(dssg_msw),
+        "dssg_histogram": _histogram(dssg),
         "leading_compartment_frequency": {
             str(k): leading[k] for k in sorted(leading)
         },
+        "risk_band_frequency": dict(bands),
+        "expected_dcs_dives": round(
+            sum(s.dcs_rate_pct / 100.0 for s in summaries), 3),
         "most_stressful_dive": asdict(most_stressful) if most_stressful else None,
         "least_stressful_dive": asdict(least_stressful) if least_stressful else None,
-        "correlation_depth_vs_dssg": _pearson(depths, dssg_msw),
-        "correlation_duration_vs_dssg": _pearson(durations, dssg_msw),
+        "correlation_depth_vs_dssg": _pearson(depths, dssg),
+        "correlation_duration_vs_dssg": _pearson(durations, dssg),
     }
 
 

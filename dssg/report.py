@@ -15,6 +15,8 @@ from datetime import datetime
 from .buhlmann import N2_HALFTIMES, N_COMPARTMENTS
 from .calculator import DSSGResult
 from .parser import Dive
+from .risk import (DAN_DSL_2024_TABLE, PAPER_MEAN_DSSG, PAPER_MEDIAN_DCS,
+                   PAPER_MEDIAN_NON_DCS, PAPER_SD_DSSG, classify)
 from .statistics_report import DiveSummary
 
 CSS = """
@@ -51,6 +53,8 @@ tbody tr:hover { background: var(--panel2); }
 .bar { height: 8px; border-radius: 4px; background: var(--accent);
   display: inline-block; vertical-align: middle; }
 .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  margin-right: 6px; vertical-align: middle; }
 .muted { color: var(--muted); }
 .method { color: var(--muted); font-size: 13.5px; }
 .method code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
@@ -141,48 +145,56 @@ def _svg_depth_profile(samples, max_depth: float, duration_s: float,
     )
 
 
-def _svg_compartment_bars(gradients: list[float], leading: int,
+def _svg_compartment_bars(gfs: list[float], leading: int,
                           width: int = 640, height: int = 260) -> str:
+    """Per-compartment gradient factor, with the M-value (GF = 1.0) line."""
     pad_l, pad_r, pad_t, pad_b = 40, 14, 14, 40
     w = width - pad_l - pad_r
     h = height - pad_t - pad_b
-    n = len(gradients)
-    gmax = max(max(gradients), 0.01)
-    gmin = min(min(gradients), 0.0)
-    span = gmax - gmin or 1.0
+    n = len(gfs)
+    top_val = max(max(gfs), 1.0) * 1.08  # keep the GF=1.0 line in view
     bw = w / n * 0.7
     gap = w / n
 
     def y(v):
-        return pad_t + (gmax - v) / span * h
+        return pad_t + (top_val - v) / top_val * h
 
-    zero_y = y(0.0)
-    bars = [f"<line x1='{pad_l}' y1='{zero_y:.1f}' x2='{pad_l + w}' y2='{zero_y:.1f}' "
-            f"stroke='#9fb0c8' stroke-width='1' stroke-dasharray='3 3'/>"]
-    for i, g in enumerate(gradients):
+    base_y = y(0.0)
+    # M-value limit line at GF = 1.0.
+    limit_y = y(1.0)
+    bars = [
+        f"<line x1='{pad_l}' y1='{base_y:.1f}' x2='{pad_l + w}' y2='{base_y:.1f}' "
+        f"stroke='#2a3a5c' stroke-width='1'/>",
+        f"<line x1='{pad_l}' y1='{limit_y:.1f}' x2='{pad_l + w}' y2='{limit_y:.1f}' "
+        f"stroke='#f87171' stroke-width='1' stroke-dasharray='4 3'/>",
+        f"<text x='{pad_l + w:.0f}' y='{limit_y - 4:.0f}' fill='#f87171' "
+        f"font-size='10' text-anchor='end'>M-value (GF 1.0)</text>",
+    ]
+    for i, g in enumerate(gfs):
         cx = pad_l + i * gap + (gap - bw) / 2
         top = y(max(g, 0.0))
-        bottom = y(min(g, 0.0))
-        colour = "#f472b6" if (i + 1) == leading else ("#34d399" if g > 0 else "#9fb0c8")
+        colour = "#f472b6" if (i + 1) == leading else (
+            "#f87171" if g >= 1.0 else "#34d399")
         bars.append(
             f"<rect x='{cx:.1f}' y='{top:.1f}' width='{bw:.1f}' "
-            f"height='{max(bottom - top, 1):.1f}' fill='{colour}' rx='2'>"
+            f"height='{max(base_y - top, 1):.1f}' fill='{colour}' rx='2'>"
             f"<title>Compartment {i + 1} ({N2_HALFTIMES[i]:.1f} min N2): "
-            f"{g * 10:.2f} msw</title></rect>"
+            f"GF {g:.2f}</title></rect>"
         )
         bars.append(f"<text x='{cx + bw / 2:.1f}' y='{height - 24}' fill='#9fb0c8' "
                     f"font-size='9' text-anchor='middle'>{i + 1}</text>")
     bars.append(f"<text x='{pad_l + w / 2:.0f}' y='{height - 6}' fill='#9fb0c8' "
                 f"font-size='11' text-anchor='middle'>Tissue compartment "
-                f"(fast &rarr; slow)</text>")
+                f"(fast &rarr; slow) &middot; gradient factor</text>")
     return (
         f"<svg viewBox='0 0 {width} {height}' role='img' "
-        f"aria-label='Per-compartment surface supersaturation gradient'>"
+        f"aria-label='Per-compartment gradient factor at surfacing'>"
         f"{''.join(bars)}</svg>"
     )
 
 
-def _svg_histogram(hist: dict, width: int = 640, height: int = 220) -> str:
+def _svg_histogram(hist: dict, width: int = 640, height: int = 220,
+                   unit_label: str = "DSSG (gradient factor)") -> str:
     edges = hist.get("edges", [])
     counts = hist.get("counts", [])
     if not counts:
@@ -210,7 +222,7 @@ def _svg_histogram(hist: dict, width: int = 640, height: int = 220) -> str:
         bars.append(f"<text x='{xx:.0f}' y='{height - 6}' fill='#9fb0c8' "
                     f"font-size='10' text-anchor='middle'>{val:.1f}</text>")
     bars.append(f"<text x='{pad_l + w / 2:.0f}' y='{height - 20}' fill='#9fb0c8' "
-                f"font-size='11' text-anchor='middle'>DSSG (msw)</text>")
+                f"font-size='11' text-anchor='middle'>{unit_label}</text>")
     return (f"<svg viewBox='0 0 {width} {height}' role='img' "
             f"aria-label='DSSG distribution'>{''.join(bars)}</svg>")
 
@@ -219,23 +231,23 @@ def _svg_histogram(hist: dict, width: int = 640, height: int = 220) -> str:
 # Page builders
 # --------------------------------------------------------------------------- #
 
-def _dssg_pill(msw: float) -> str:
-    colour = "var(--good)"
-    if msw >= 9:
-        colour = "var(--bad)"
-    elif msw >= 6:
-        colour = "var(--warn)"
-    return (f"<span class='pill' style='background:{colour}22;color:{colour};"
-            f"border:1px solid {colour}55'>{msw:.2f} msw</span>")
+def _dssg_pill(dssg: float) -> str:
+    """Coloured DSSG (gradient factor), banded by the DAN DSL 2024 risk."""
+    band = classify(dssg)
+    c = band.colour
+    return (f"<span class='pill' title='{band.label} risk &middot; "
+            f"~{band.dcs_rate_pct:.3g}% observed DCS rate' "
+            f"style='background:{c}22;color:{c};border:1px solid {c}77'>"
+            f"{dssg:.2f}</span>")
 
 
 def render_index(summaries: list[DiveSummary], stats: dict) -> str:
-    d = stats.get("dssg_msw", {})
+    d = stats.get("dssg", {})
     cards = [
         ("Dives analysed", f"{stats.get('dive_count', 0)}", ""),
-        ("Mean DSSG", f"{d.get('mean', 0):.2f}", " msw"),
-        ("Max DSSG", f"{d.get('max', 0):.2f}", " msw"),
-        ("Median DSSG", f"{d.get('median', 0):.2f}", " msw"),
+        ("Mean DSSG", f"{d.get('mean', 0):.2f}", " GF"),
+        ("Max DSSG", f"{d.get('max', 0):.2f}", " GF"),
+        ("Median DSSG", f"{d.get('median', 0):.2f}", " GF"),
     ]
     cards_html = "".join(
         f"<div class='card'><div class='k'>{_esc(k)}</div>"
@@ -243,11 +255,12 @@ def render_index(summaries: list[DiveSummary], stats: dict) -> str:
         for k, v, u in cards
     )
 
-    max_msw = max((s.dssg_msw for s in summaries), default=1.0) or 1.0
+    max_dssg = max((s.dssg for s in summaries), default=1.0) or 1.0
     rows = []
     for s in summaries:
         date = s.date[:10] if s.date else "—"
-        barw = max(2, int(s.dssg_msw / max_msw * 90))
+        barw = max(2, int(s.dssg / max_dssg * 80))
+        rate = "0" if s.dcs_rate_pct == 0 else f"{s.dcs_rate_pct:.3g}%"
         rows.append(
             "<tr>"
             f"<td class='num' data-v='{s.number}'>"
@@ -256,8 +269,10 @@ def render_index(summaries: list[DiveSummary], stats: dict) -> str:
             f"<td>{_esc(s.location or '—')}</td>"
             f"<td class='num' data-v='{s.max_depth_m}'>{s.max_depth_m:.1f}</td>"
             f"<td class='num' data-v='{s.duration_min}'>{s.duration_min:.0f}</td>"
-            f"<td class='num' data-v='{s.dssg_msw}'>{_dssg_pill(s.dssg_msw)} "
+            f"<td class='num' data-v='{s.dssg}'>{_dssg_pill(s.dssg)} "
             f"<span class='bar' style='width:{barw}px'></span></td>"
+            f"<td data-v='{_esc(s.risk_band)}'>{_esc(s.risk_band)}</td>"
+            f"<td class='num' data-v='{s.dcs_rate_pct}'>{rate}</td>"
             f"<td class='num' data-v='{s.leading_compartment}'>#{s.leading_compartment}</td>"
             "</tr>"
         )
@@ -266,7 +281,8 @@ def render_index(summaries: list[DiveSummary], stats: dict) -> str:
         "<table class='sortable'><thead><tr>"
         "<th class='num'>#</th><th>Date</th><th>Location</th>"
         "<th class='num'>Max depth (m)</th><th class='num'>Duration (min)</th>"
-        "<th class='num'>DSSG</th><th class='num'>Leading comp.</th>"
+        "<th class='num'>DSSG</th><th>Risk</th>"
+        "<th class='num'>DCS rate</th><th class='num'>Leading comp.</th>"
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
     )
 
@@ -277,40 +293,81 @@ def render_index(summaries: list[DiveSummary], stats: dict) -> str:
 
     corr_depth = stats.get("correlation_depth_vs_dssg")
     corr_dur = stats.get("correlation_duration_vs_dssg")
+    expected = stats.get("expected_dcs_dives", 0)
+
+    # DAN DSL 2024 empirical risk reference table.
+    risk_rows = "".join(
+        f"<tr><td>{_esc(label)}</td>"
+        f"<td class='num'><span class='dot' style='background:"
+        f"{classify(_band_value(label)).colour}'></span>"
+        f"{_esc(classify(_band_value(label)).label)}</td>"
+        f"<td class='num'>{rate:.3g}%</td></tr>"
+        for label, rate in DAN_DSL_2024_TABLE
+    )
+    risk_table = (
+        "<table><thead><tr><th>DSSG (GF)</th><th class='num'>Risk band</th>"
+        "<th class='num'>Observed DCS rate</th></tr></thead><tbody>"
+        + risk_rows + "</tbody></table>"
+    )
 
     body = (
         "<header><h1>MacDive DSSG report</h1>"
-        f"<div class='sub'>Surface supersaturation gradients across "
+        f"<div class='sub'>DAN Surface Supersaturation Gradients across "
         f"{stats.get('dive_count', 0)} dives &middot; generated "
         f"{datetime.now():%Y-%m-%d %H:%M}</div></header>"
         f"<div class='cards'>{cards_html}</div>"
         "<div class='grid2'>"
         "<div class='panel'><h2>DSSG distribution</h2>"
-        f"{_svg_histogram(stats.get('dssg_histogram', {}))}</div>"
+        f"{_svg_histogram(stats.get('dssg_histogram', {}))}"
+        f"<p class='muted' style='margin-top:10px'>Reference (DAN DSL 2024): "
+        f"mean DSSG <b>{PAPER_MEAN_DSSG:.2f} &plusmn; {PAPER_SD_DSSG:.2f}</b>; "
+        f"median <b>{PAPER_MEDIAN_NON_DCS:.3f}</b> (no DCS) vs "
+        f"<b>{PAPER_MEDIAN_DCS:.3f}</b> (DCS).</p></div>"
         "<div class='panel'><h2>Overview</h2>"
-        f"<p class='muted'>Std deviation: <b>{d.get('stdev', 0):.2f} msw</b><br>"
-        f"Range: <b>{d.get('min', 0):.2f}</b> &ndash; <b>{d.get('max', 0):.2f} msw</b><br>"
+        f"<p class='muted'>Std deviation: <b>{d.get('stdev', 0):.2f} GF</b><br>"
+        f"Range: <b>{d.get('min', 0):.2f}</b> &ndash; <b>{d.get('max', 0):.2f} GF</b><br>"
         f"Leading compartments: {leading_html}<br>"
+        f"Expected DCS dives (sum of band rates): <b>{expected:.2f}</b><br>"
         f"Corr. depth vs DSSG: <b>{_fmt(corr_depth)}</b><br>"
         f"Corr. duration vs DSSG: <b>{_fmt(corr_dur)}</b></p></div>"
         "</div>"
         f"<div class='panel'><h2>Dives</h2>"
         "<p class='muted'>Click a column header to sort. Click a dive number "
-        "for the full profile and per-compartment breakdown.</p>"
+        "for the full profile and per-compartment breakdown. The DSSG is a "
+        "gradient factor (1.0 = at the M-value); colours follow the DAN DSL "
+        "2024 risk bands.</p>"
         f"{table}</div>"
+        "<div class='grid2'>"
+        "<div class='panel'><h2>DCS risk by DSSG (DAN DSL 2024)</h2>"
+        f"{risk_table}</div>"
         "<div class='panel method'><h2>What is the DSSG?</h2>"
         "<p>The <b>DAN Surface Supersaturation Gradient</b> estimates the "
-        "decompression stress a diver carries to the surface. A Buhlmann "
-        "ZH-L16 model tracks dissolved nitrogen (and helium) in 16 tissue "
+        "decompression stress a diver carries to the surface. A B&uuml;hlmann "
+        "<b>ZH-L16C</b> model tracks dissolved nitrogen and helium in 16 tissue "
         "compartments through the recorded profile. At surfacing, each "
-        "compartment's gradient is "
-        "<code>tissue tension &minus; surface pressure</code>; the DSSG is the "
-        "largest gradient across all compartments (the controlling "
-        "compartment). Higher gradients mean more dissolved gas relative to "
-        "ambient pressure, and a greater theoretical bubble-formation risk.</p>"
-        "</div>"
+        "compartment's supersaturation is expressed as a <b>gradient factor</b> "
+        "&mdash; <code>(tissue tension &minus; ambient) / (M-value &minus; "
+        "ambient)</code> &mdash; and the DSSG is the value of the <b>leading "
+        "compartment</b> (highest gradient factor / critical ratio at "
+        "surfacing). A GF of <b>1.0</b> means surfacing exactly at the ZH-L16C "
+        "M-value limit. In the DAN DSL 2024 study (127,957 dives) it was the "
+        "strongest independent predictor of DCS.</p>"
+        "<p style='font-size:12px'>Sources: Marroni A. et al., "
+        "<i>Identification of DCS risk factors in recreational diving: "
+        "multifactorial model based on the DAN DSL Database 2024</i>, "
+        "Int. Maritime Health, 2026; Cialoni D. et al., <i>Dive Risk Factors, "
+        "Gas Bubble Formation, and Decompression Illness &hellip; DAN Europe "
+        "DSL Data Base</i>, Front. Psychol. 2017;8:1587. Educational tool "
+        "&mdash; not a dive planner or medical device.</p>"
+        "</div></div>"
     )
     return _page("MacDive DSSG report", body)
+
+
+def _band_value(label: str) -> float:
+    """Representative DSSG value for a Table-3 row label (for colour lookup)."""
+    digits = "".join(ch for ch in label if (ch.isdigit() or ch == "."))
+    return float(digits) if digits else 0.0
 
 
 def render_dive(dive: Dive, result: DSSGResult, summary: DiveSummary) -> str:
@@ -321,15 +378,19 @@ def render_dive(dive: Dive, result: DSSGResult, summary: DiveSummary) -> str:
         for m in dive.gas_mixes.values()
     ) or "Air (assumed)"
     temp = f"{dive.min_temp_c:.1f} &deg;C" if dive.min_temp_c is not None else "—"
+    band = classify(result.dssg)
+    rate = "0" if band.dcs_rate_pct == 0 else f"{band.dcs_rate_pct:.3g}%"
 
     cards = [
-        ("DSSG", f"{result.dssg_msw:.2f}", " msw"),
-        ("DSSG", f"{result.dssg_bar:.3f}", " bar"),
+        ("DSSG", f"{result.dssg:.3f}", " GF"),
+        ("Risk band",
+         f"<span class='dot' style='background:{band.colour}'></span>{band.label}",
+         f" &middot; ~{rate} DCS"),
         ("Leading compartment", f"#{result.leading_compartment}",
          f" ({N2_HALFTIMES[result.leading_compartment - 1]:.1f} min)"),
         ("Max depth", f"{dive.max_depth:.1f}", " m"),
         ("Duration", f"{dive.duration_s / 60:.0f}", " min"),
-        ("Min temp", temp, ""),
+        ("Raw gradient", f"{result.raw_gradient_bar:.3f}", " bar"),
     ]
     cards_html = "".join(
         f"<div class='card'><div class='k'>{_esc(k)}</div>"
@@ -345,18 +406,26 @@ def render_dive(dive: Dive, result: DSSGResult, summary: DiveSummary) -> str:
         f"<div class='cards'>{cards_html}</div>"
         "<div class='panel'><h2>Depth profile</h2>"
         f"{_svg_depth_profile(dive.samples, dive.max_depth, dive.duration_s)}</div>"
-        "<div class='panel'><h2>Surface supersaturation gradient by compartment</h2>"
-        "<p class='muted'>Gradient = tissue tension &minus; surface pressure at "
-        "surfacing. The pink bar is the controlling compartment that defines "
-        "this dive's DSSG.</p>"
-        f"{_svg_compartment_bars(result.surface_gradients, result.leading_compartment)}"
+        "<div class='panel'><h2>Gradient factor by compartment</h2>"
+        "<p class='muted'>Each compartment's supersaturation as a fraction of "
+        "its M-value at surfacing. The pink bar is the leading compartment "
+        "(highest GF) that defines this dive's DSSG; the dashed red line is the "
+        "M-value limit (GF&nbsp;=&nbsp;1.0).</p>"
+        f"{_svg_compartment_bars(result.gradient_factors, result.leading_compartment)}"
         "</div>"
         f"<div class='panel'><h2>Dive details</h2><table>"
         f"<tr><th>Gas mixes</th><td>{_esc(gases)}</td></tr>"
+        f"<tr><th>Min temperature</th><td>{temp}</td></tr>"
         f"<tr><th>Surface pressure</th><td>{dive.surface_pressure:.4f} bar</td></tr>"
         f"<tr><th>Profile samples</th><td>{len(dive.samples)}</td></tr>"
-        f"<tr><th>Controlling gradient</th>"
-        f"<td>{result.dssg_msw:.2f} msw ({result.dssg_bar:.3f} bar)</td></tr>"
+        f"<tr><th>DSSG (leading compartment)</th>"
+        f"<td>GF {result.dssg:.3f} &middot; compartment #"
+        f"{result.leading_compartment} "
+        f"({N2_HALFTIMES[result.leading_compartment - 1]:.1f} min) &middot; "
+        f"raw gradient {result.raw_gradient_bar:.3f} bar</td></tr>"
+        f"<tr><th>Empirical DCS rate (DAN DSL 2024)</th>"
+        f"<td><span class='dot' style='background:{band.colour}'></span>"
+        f"{band.label} &middot; ~{rate}</td></tr>"
         "</table></div>"
     )
     return _page(f"Dive #{dive.number} – DSSG", body)
