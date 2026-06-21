@@ -66,19 +66,6 @@ gas** can be analysed. The format is auto-detected:
 Summary-only exports (most plain CSVs, without per-sample depth/time) cannot be
 analysed and are rejected with a clear message.
 
-## Deployment
-
-The repo ships a Docker Compose stack (app + Caddy with automatic HTTPS) for a
-cheap single-box deployment with persistent storage:
-
-```bash
-DOMAIN=dssg.example.com docker compose up -d --build   # or just: docker compose up
-```
-
-Because uploads are stored permanently, the app needs a persistent disk — a
-~$4–5/month VPS is the cheapest fit. See [`DEPLOY.md`](DEPLOY.md) for VPS,
-Fly.io (with a volume), and hardening notes.
-
 ## What you get
 
 In the output directory (`report/` by default):
